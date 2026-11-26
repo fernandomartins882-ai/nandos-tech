@@ -1,4 +1,4 @@
-const CACHE='nandos-tech-v3';
+const CACHE='nandos-tech-v4';
 const ASSETS=['./','./index.html','./styles.css','./app.js','./supabase-config.js','./manifest.json','./Captura%20de%20Tela%202026-11-25%20a%CC%80s%2020.02.40.png'];
 
 self.addEventListener('install',event=>{
