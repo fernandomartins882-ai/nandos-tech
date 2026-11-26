@@ -66,13 +66,28 @@ function saleForm(){
  if(!db.products.length&&!db.services.length){toast('Cadastre ao menos um produto ou serviço antes de vender.');return;}
  const customers='<option value="">Cliente não identificado</option>'+db.customers.map(c=>'<option value="'+c.id+'">'+esc(c.name)+'</option>').join('');
  const line='<div class="sale-line" data-sale-line><select class="sale-item" required>'+saleItemOptions()+'</select><input class="sale-qty" type="number" min="1" step="1" value="1" aria-label="Quantidade"><input class="sale-discount" type="number" min="0" step=".01" value="0" aria-label="Desconto do item"><button type="button" class="small-btn remove-sale-line">Remover</button></div>';
- openModal('Nova venda · PDV','<form id="saleForm"><label>Cliente<select name="customer_id">'+customers+'</select></label><div class="table-head"><h3>Itens da venda</h3><button type="button" class="secondary" id="addSaleLine">＋ Adicionar item</button></div><div id="saleLines">'+line+'</div><div class="form-grid"><label>Desconto geral (R$)<input name="general_discount" type="number" min="0" step=".01" value="0"></label><label>Forma de pagamento<select name="payment_method"><option value="cash">Dinheiro</option><option value="pix">Pix</option><option value="debit">Cartão de débito</option><option value="credit">Cartão de crédito</option><option value="other">Outro</option></select></label><label>Parcelas (crédito)<input name="installments" type="number" min="1" step="1" value="1"></label></div><label>Observações<textarea name="notes" rows="2"></textarea></label><div class="panel"><p id="saleSummary">Total da venda: R$ 0,00</p><small>Preço e estoque serão conferidos novamente pelo Supabase ao confirmar.</small></div><div class="form-actions"><button type="button" class="secondary" id="cancelSale">Cancelar</button><button class="primary" type="submit">Registrar venda</button></div></form>');
- const form=$('#saleForm'),lines=$('#saleLines');
+ const paymentLine='<div class="payment-line" data-payment-line><select class="payment-method" aria-label="Forma de pagamento"><option value="cash">Dinheiro</option><option value="pix">Pix</option><option value="debit">Cartão de débito</option><option value="credit">Cartão de crédito</option><option value="other">Outro</option></select><input class="payment-amount" type="number" min="0.01" step=".01" placeholder="Valor (R$)" required><input class="payment-installments" type="number" min="1" step="1" value="1" title="Parcelas no crédito"><button type="button" class="small-btn remove-payment-line">Remover</button></div>';
+ openModal('Nova venda · PDV','<form id="saleForm"><label>Cliente<select name="customer_id">'+customers+'</select></label><div class="table-head"><h3>Itens da venda</h3><button type="button" class="secondary" id="addSaleLine">＋ Adicionar item</button></div><div id="saleLines">'+line+'</div><div class="form-grid"><label>Desconto geral (R$)<input name="general_discount" type="number" min="0" step=".01" value="0"></label></div><div class="table-head"><h3>Pagamentos</h3><button type="button" class="secondary" id="addPaymentLine">＋ Adicionar pagamento</button></div><div id="paymentLines">'+paymentLine+'</div><label>Observações<textarea name="notes" rows="2"></textarea></label><div class="panel"><p id="saleSummary">Total da venda: R$ 0,00</p><p id="paymentSummary">Total pago: R$ 0,00</p><small>Você pode dividir o pagamento entre dinheiro, Pix e cartões. O sistema confere se a soma corresponde ao total da venda.</small></div><div class="form-actions"><button type="button" class="secondary" id="cancelSale">Cancelar</button><button class="primary" type="submit">Registrar venda</button></div></form>');
+ const form=$('#saleForm'),lines=$('#saleLines'),paymentLines=$('#paymentLines');
  const priceOf=value=>{const [type,id]=String(value||'').split(':');const item=(type==='product'?db.products:db.services).find(x=>x.id===id);return item?Number(item.price||0):0;};
- const calc=()=>{let subtotal=0,itemDiscount=0;lines.querySelectorAll('[data-sale-line]').forEach(row=>{subtotal+=priceOf(row.querySelector('.sale-item').value)*Number(row.querySelector('.sale-qty').value||0);itemDiscount+=Number(row.querySelector('.sale-discount').value||0);});const general=Number(form.elements.general_discount.value||0);const total=Math.max(0,subtotal-itemDiscount-general);$('#saleSummary').textContent='Subtotal: '+brl(subtotal)+' · Descontos: '+brl(itemDiscount+general)+' · Total: '+brl(total);return {subtotal,itemDiscount,general,total};};
+ const calc=()=>{
+  let subtotal=0,itemDiscount=0;
+  lines.querySelectorAll('[data-sale-line]').forEach(row=>{subtotal+=priceOf(row.querySelector('.sale-item').value)*Number(row.querySelector('.sale-qty').value||0);itemDiscount+=Number(row.querySelector('.sale-discount').value||0);});
+  const general=Number(form.elements.general_discount.value||0),total=Math.max(0,subtotal-itemDiscount-general);
+  const paid=[...paymentLines.querySelectorAll('.payment-amount')].reduce((sum,input)=>sum+Number(input.value||0),0);
+  $('#saleSummary').textContent='Subtotal: '+brl(subtotal)+' · Descontos: '+brl(itemDiscount+general)+' · Total: '+brl(total);
+  $('#paymentSummary').textContent='Total pago: '+brl(paid)+' · '+(Math.abs(paid-total)<0.005?'Pagamento conferido':'Falta/passa: '+brl(Math.abs(total-paid)));
+  return {subtotal,itemDiscount,general,total,paid};
+ };
  form.addEventListener('input',calc);form.addEventListener('change',calc);
  $('#addSaleLine').onclick=()=>{lines.insertAdjacentHTML('beforeend',line);calc();};
- lines.addEventListener('click',e=>{const b=e.target.closest('.remove-sale-line');if(b){if(lines.querySelectorAll('[data-sale-line]').length===1){toast('A venda precisa ter ao menos um item.');return;}b.closest('[data-sale-line]').remove();calc();}});
+ $('#addPaymentLine').onclick=()=>{paymentLines.insertAdjacentHTML('beforeend',paymentLine);calc();};
+ form.addEventListener('click',e=>{
+  const removeItem=e.target.closest('.remove-sale-line');
+  if(removeItem){if(lines.querySelectorAll('[data-sale-line]').length===1){toast('A venda precisa ter ao menos um item.');return;}removeItem.closest('[data-sale-line]').remove();calc();}
+  const removePayment=e.target.closest('.remove-payment-line');
+  if(removePayment){if(paymentLines.querySelectorAll('[data-payment-line]').length===1){toast('Mantenha ao menos uma forma de pagamento.');return;}removePayment.closest('[data-payment-line]').remove();calc();}
+ });
  $('#cancelSale').onclick=closeModal;calc();
  form.onsubmit=async e=>{
   e.preventDefault();const items=[];
@@ -83,17 +98,24 @@ function saleForm(){
    const gross=priceOf(value)*qty;if(discount<0||discount>gross){toast('Há desconto inválido em um item.');return;}
    items.push({product_id:type==='product'?id:null,service_id:type==='service'?id:null,quantity:qty,discount_amount:discount});
   }
-  const totals=calc();if(totals.general<0||totals.general>totals.subtotal-totals.itemDiscount){toast('Desconto geral inválido.');return;}
-  const fd=new FormData(form),method=fd.get('payment_method');
-  const payments=totals.total>0?[{payment_method:method,amount:Number(totals.total.toFixed(2)),installments:method==='credit'?Math.max(1,Number(fd.get('installments')||1)):1,notes:null}]:[];
-  const payload={p_cash_session_id:cashSession.id,p_items:items,p_payments:payments,p_general_discount:totals.general,p_customer_id:fd.get('customer_id')||null,p_notes:fd.get('notes')||null};
+  const totals=calc();
+  if(totals.general<0||totals.general>totals.subtotal-totals.itemDiscount){toast('Desconto geral inválido.');return;}
+  const payments=[];
+  for(const row of paymentLines.querySelectorAll('[data-payment-line]')){
+   const method=row.querySelector('.payment-method').value,amount=Number(row.querySelector('.payment-amount').value),installments=Number(row.querySelector('.payment-installments').value||1);
+   if(!['cash','pix','debit','credit','other'].includes(method)||!Number.isFinite(amount)||amount<=0||!Number.isInteger(installments)||installments<1){toast('Confira os valores e as formas de pagamento.');return;}
+   payments.push({payment_method:method,amount:Number(amount.toFixed(2)),installments:method==='credit'?installments:1,notes:null});
+  }
+  if(totals.total>0&&Math.abs(totals.paid-totals.total)>=0.005){toast('A soma dos pagamentos precisa ser igual ao total da venda.');return;}
+  if(totals.total===0&&totals.paid>0){toast('Uma venda com total zero não pode ter pagamento.');return;}
+  const fd=new FormData(form);
+  const payload={p_cash_session_id:cashSession.id,p_items:items,p_payments:totals.total>0?payments:[],p_general_discount:totals.general,p_customer_id:fd.get('customer_id')||null,p_notes:fd.get('notes')||null};
   const button=form.querySelector('button[type="submit"]');button.disabled=true;button.textContent='Registrando...';
   const {data,error}=await window.supabaseClient.rpc('create_sale',payload);
   if(error){button.disabled=false;button.textContent='Registrar venda';toast('Não foi possível registrar: '+error.message);return;}
   await loadRemoteCashSales();closeModal();render();const result=Array.isArray(data)?data[0]:data;toast('Venda nº '+(result?.sale_number||'')+' registrada com sucesso.');
  };
 }
-
 function salesPage(){
  const rows=db.sales.map(s=>'<tr><td>'+esc(s.number||'—')+'</td><td>'+dateBR(s.date)+'</td><td>'+brl(s.total)+'</td><td>'+esc(s.status||'—')+'</td></tr>').join('');
  $('#page').innerHTML='<div class="section-title"><div><h2>Vendas · PDV</h2><p>Histórico de vendas registradas.</p></div><button class="primary" id="newSale" '+(cashSession?'':'disabled')+'>＋ Nova venda</button></div><div class="panel"><p>'+(cashSession?'Caixa aberto. Você já pode registrar vendas.':'Para realizar vendas, primeiro abra o caixa.')+'</p><button class="secondary" id="goCash">Ir para o caixa</button></div><div class="table-card">'+table(['Nº venda','Data','Total','Status'],rows||'<tr><td colspan="4" class="empty">Nenhuma venda registrada.</td></tr>')+'</div>';
