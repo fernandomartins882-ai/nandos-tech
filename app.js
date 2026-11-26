@@ -55,10 +55,50 @@ async function approveWithdrawal(id){
  const {error}=await window.supabaseClient.rpc('approve_cash_withdrawal',{p_movement_id:id});
  if(error){toast(error.message);return;}await loadRemoteCashSales();render();toast('Sangria autorizada.');
 }
+
+function saleItemOptions(){
+ const products=db.products.map(p=>'<option value="product:'+p.id+'">'+esc(p.name)+' · Produto · '+brl(p.price)+' · estoque '+p.stock+'</option>');
+ const services=db.services.map(s=>'<option value="service:'+s.id+'">'+esc(s.name)+' · Serviço · '+brl(s.price)+'</option>');
+ return '<option value="">Selecione um produto ou serviço</option>'+products.join('')+services.join('');
+}
+function saleForm(){
+ if(!cashSession){toast('Abra o caixa antes de registrar uma venda.');return;}
+ if(!db.products.length&&!db.services.length){toast('Cadastre ao menos um produto ou serviço antes de vender.');return;}
+ const customers='<option value="">Cliente não identificado</option>'+db.customers.map(c=>'<option value="'+c.id+'">'+esc(c.name)+'</option>').join('');
+ const line='<div class="sale-line" data-sale-line><select class="sale-item" required>'+saleItemOptions()+'</select><input class="sale-qty" type="number" min="1" step="1" value="1" aria-label="Quantidade"><input class="sale-discount" type="number" min="0" step=".01" value="0" aria-label="Desconto do item"><button type="button" class="small-btn remove-sale-line">Remover</button></div>';
+ openModal('Nova venda · PDV','<form id="saleForm"><label>Cliente<select name="customer_id">'+customers+'</select></label><div class="table-head"><h3>Itens da venda</h3><button type="button" class="secondary" id="addSaleLine">＋ Adicionar item</button></div><div id="saleLines">'+line+'</div><div class="form-grid"><label>Desconto geral (R$)<input name="general_discount" type="number" min="0" step=".01" value="0"></label><label>Forma de pagamento<select name="payment_method"><option value="cash">Dinheiro</option><option value="pix">Pix</option><option value="debit">Cartão de débito</option><option value="credit">Cartão de crédito</option><option value="other">Outro</option></select></label><label>Parcelas (crédito)<input name="installments" type="number" min="1" step="1" value="1"></label></div><label>Observações<textarea name="notes" rows="2"></textarea></label><div class="panel"><p id="saleSummary">Total da venda: R$ 0,00</p><small>Preço e estoque serão conferidos novamente pelo Supabase ao confirmar.</small></div><div class="form-actions"><button type="button" class="secondary" id="cancelSale">Cancelar</button><button class="primary" type="submit">Registrar venda</button></div></form>');
+ const form=$('#saleForm'),lines=$('#saleLines');
+ const priceOf=value=>{const [type,id]=String(value||'').split(':');const item=(type==='product'?db.products:db.services).find(x=>x.id===id);return item?Number(item.price||0):0;};
+ const calc=()=>{let subtotal=0,itemDiscount=0;lines.querySelectorAll('[data-sale-line]').forEach(row=>{subtotal+=priceOf(row.querySelector('.sale-item').value)*Number(row.querySelector('.sale-qty').value||0);itemDiscount+=Number(row.querySelector('.sale-discount').value||0);});const general=Number(form.elements.general_discount.value||0);const total=Math.max(0,subtotal-itemDiscount-general);$('#saleSummary').textContent='Subtotal: '+brl(subtotal)+' · Descontos: '+brl(itemDiscount+general)+' · Total: '+brl(total);return {subtotal,itemDiscount,general,total};};
+ form.addEventListener('input',calc);form.addEventListener('change',calc);
+ $('#addSaleLine').onclick=()=>{lines.insertAdjacentHTML('beforeend',line);calc();};
+ lines.addEventListener('click',e=>{const b=e.target.closest('.remove-sale-line');if(b){if(lines.querySelectorAll('[data-sale-line]').length===1){toast('A venda precisa ter ao menos um item.');return;}b.closest('[data-sale-line]').remove();calc();}});
+ $('#cancelSale').onclick=closeModal;calc();
+ form.onsubmit=async e=>{
+  e.preventDefault();const items=[];
+  for(const row of lines.querySelectorAll('[data-sale-line]')){
+   const value=row.querySelector('.sale-item').value,[type,id]=String(value||'').split(':');
+   const qty=Number(row.querySelector('.sale-qty').value),discount=Number(row.querySelector('.sale-discount').value||0);
+   if(!id||!['product','service'].includes(type)||!Number.isInteger(qty)||qty<1){toast('Confira os itens e as quantidades.');return;}
+   const gross=priceOf(value)*qty;if(discount<0||discount>gross){toast('Há desconto inválido em um item.');return;}
+   items.push({product_id:type==='product'?id:null,service_id:type==='service'?id:null,quantity:qty,discount_amount:discount});
+  }
+  const totals=calc();if(totals.general<0||totals.general>totals.subtotal-totals.itemDiscount){toast('Desconto geral inválido.');return;}
+  const fd=new FormData(form),method=fd.get('payment_method');
+  const payments=totals.total>0?[{payment_method:method,amount:Number(totals.total.toFixed(2)),installments:method==='credit'?Math.max(1,Number(fd.get('installments')||1)):1,notes:null}]:[];
+  const payload={p_cash_session_id:cashSession.id,p_items:items,p_payments:payments,p_general_discount:totals.general,p_customer_id:fd.get('customer_id')||null,p_notes:fd.get('notes')||null};
+  const button=form.querySelector('button[type="submit"]');button.disabled=true;button.textContent='Registrando...';
+  const {data,error}=await window.supabaseClient.rpc('create_sale',payload);
+  if(error){button.disabled=false;button.textContent='Registrar venda';toast('Não foi possível registrar: '+error.message);return;}
+  await loadRemoteCashSales();closeModal();render();const result=Array.isArray(data)?data[0]:data;toast('Venda nº '+(result?.sale_number||'')+' registrada com sucesso.');
+ };
+}
+
 function salesPage(){
  const rows=db.sales.map(s=>'<tr><td>'+esc(s.number||'—')+'</td><td>'+dateBR(s.date)+'</td><td>'+brl(s.total)+'</td><td>'+esc(s.status||'—')+'</td></tr>').join('');
- $('#page').innerHTML='<div class="section-title"><div><h2>Vendas · PDV</h2><p>Histórico de vendas registradas.</p></div></div><div class="panel"><p>'+(cashSession?'Caixa aberto. O lançamento de vendas será habilitado na próxima etapa.':'Para realizar vendas, primeiro abra o caixa.')+'</p><button class="primary" id="goCash">Ir para o caixa</button></div><div class="table-card">'+table(['Nº venda','Data','Total','Status'],rows||'<tr><td colspan="4" class="empty">Nenhuma venda registrada.</td></tr>')+'</div>';
+ $('#page').innerHTML='<div class="section-title"><div><h2>Vendas · PDV</h2><p>Histórico de vendas registradas.</p></div><button class="primary" id="newSale" '+(cashSession?'':'disabled')+'>＋ Nova venda</button></div><div class="panel"><p>'+(cashSession?'Caixa aberto. Você já pode registrar vendas.':'Para realizar vendas, primeiro abra o caixa.')+'</p><button class="secondary" id="goCash">Ir para o caixa</button></div><div class="table-card">'+table(['Nº venda','Data','Total','Status'],rows||'<tr><td colspan="4" class="empty">Nenhuma venda registrada.</td></tr>')+'</div>';
  $('#goCash').onclick=()=>setPage('cash');
+ const newSale=$('#newSale');if(newSale)newSale.onclick=saleForm;
 }
 
 function load(){try{return JSON.parse(localStorage.getItem(DBKEY))||{products:[],services:[],customers:[],quotes:[],sales:[]}}catch{return {products:[],services:[],customers:[],quotes:[],sales:[]}}}
