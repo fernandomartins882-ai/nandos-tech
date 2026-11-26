@@ -22,3 +22,52 @@
 .auth-loading{color:#778196;font-size:12px;text-align:center;padding:8px}
 .logout-btn{border:1px solid var(--line);background:#fff;color:var(--muted);border-radius:8px;padding:9px 12px;font:600 12px 'DM Sans';cursor:pointer}
 @media(max-width:700px){.auth-card{padding:24px}}
+
+
+/* PDV: formulário de venda */
+dialog:has(.sale-pdv){width:min(920px,calc(100% - 28px));padding:28px;max-height:92vh}
+dialog:has(.sale-pdv) .modal-head{margin-bottom:22px}
+dialog:has(.sale-pdv) .modal-head h2{font-size:22px}
+.sale-pdv{display:grid;gap:18px}
+.sale-client-card,.sale-section{background:#fff;border:1px solid var(--line);border-radius:15px;padding:18px}
+.sale-client-card{background:linear-gradient(135deg,#f7f9ff,#fff);border-color:#e3eaff}
+.sale-kicker,.sale-summary-top{font-size:10px;letter-spacing:1.3px;font-weight:800;color:#7b879b;margin-bottom:10px}
+.sale-pdv label{display:flex;flex-direction:column;gap:7px;font-size:11px;font-weight:700;color:#59657a;min-width:0}
+.sale-pdv input,.sale-pdv select,.sale-pdv textarea{width:100%;min-width:0;border:1px solid #e1e6ef;border-radius:9px;padding:11px 12px;background:#fff;color:var(--text);font:13px 'DM Sans';}
+.sale-pdv input:focus,.sale-pdv select:focus,.sale-pdv textarea:focus{border-color:#8ba6ff;box-shadow:0 0 0 3px #eaf0ff;outline:0}
+.sale-wide-field{max-width:100%}
+.sale-section-head{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:16px}
+.sale-section-head>div{display:flex;align-items:center;gap:12px}
+.sale-section-head h3{font:800 15px Manrope;margin:0;color:#182438}
+.sale-section-head p{font-size:11px;color:var(--muted);margin:4px 0 0}
+.sale-step{width:34px;height:34px;display:grid;place-items:center;border-radius:10px;background:#edf2ff;color:var(--blue);font:800 12px Manrope;flex-shrink:0}
+.sale-lines{display:grid;gap:9px}
+.sale-line,.payment-line{display:grid;grid-template-columns:minmax(220px,1fr) 78px 130px auto;gap:10px;align-items:end;padding:12px;background:#f8f9fc;border:1px solid #edf0f5;border-radius:11px}
+.sale-mini-field{max-width:100%}
+.sale-line .remove-sale-line,.payment-line .remove-payment-line{height:39px;white-space:nowrap;color:#b54752;border-color:#f0d9dc;background:#fff}
+.sale-general-discount{display:flex;justify-content:flex-end;margin-top:13px}
+.sale-general-discount label{width:min(240px,100%)}
+.payment-line{grid-template-columns:minmax(160px,1fr) minmax(130px,.8fr) 90px auto}
+.sale-notes{margin-top:16px}
+.sale-pdv textarea{resize:vertical;min-height:64px}
+.sale-summary-card{padding:20px 22px;border-radius:15px;background:#142238;color:#fff;box-shadow:0 10px 25px #14223822}
+.sale-summary-top{display:flex;justify-content:space-between;color:#aab8d0;margin:0 0 12px}
+.sale-summary-dot{color:#53d6a1}
+.sale-summary-card p{margin:7px 0;color:#dce5f3;font-size:12px}
+.sale-summary-card #saleSummary{font:700 15px Manrope;color:#fff}
+.sale-summary-card #paymentSummary{color:#8de0bd;font-weight:700}
+.sale-summary-card small{display:block;margin-top:12px;padding-top:11px;border-top:1px solid #ffffff20;color:#aab8d0;line-height:1.5}
+.sale-actions{margin-top:0;padding-top:3px}
+.sale-actions .primary{padding:13px 20px}
+@media(max-width:650px){
+ dialog:has(.sale-pdv){padding:18px 14px;width:calc(100% - 16px);max-height:94vh}
+ .sale-client-card,.sale-section{padding:14px}
+ .sale-section-head{align-items:flex-start;flex-direction:column}
+ .sale-section-head>.secondary{width:100%}
+ .sale-line,.payment-line{grid-template-columns:minmax(0,1fr) 74px;align-items:end}
+ .sale-product-field,.sale-payment-method,.sale-payment-amount{grid-column:1/-1}
+ .sale-line .remove-sale-line,.payment-line .remove-payment-line{grid-column:1/-1;width:100%}
+ .sale-general-discount{justify-content:stretch}
+ .sale-general-discount label{width:100%}
+ .sale-summary-card{padding:17px}
+}
