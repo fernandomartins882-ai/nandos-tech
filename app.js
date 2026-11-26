@@ -293,18 +293,123 @@ $('#closeModal').onclick=closeModal;$('#menuBtn').onclick=()=>$('#sidebar').clas
 $('#today').textContent=new Date().toLocaleDateString('pt-BR',{weekday:'long',day:'2-digit',month:'long'});
 document.addEventListener('input',e=>{if(e.target.name==='discount')updateQuoteTotal()});
 
-function initializeAuth(){
-  // Modo sem tela de login: abre o painel usando os dados locais deste navegador.
+async function initializeAuth(){
+  const client = window.supabaseClient;
   const gate = document.querySelector('#authGate');
   const shell = document.querySelector('.app-shell');
-  if(gate) gate.hidden = true;
-  if(shell) shell.style.display = 'flex';
-  window.currentProfile = null;
-  const foot = document.querySelector('.sidebar-foot');
-  if(foot) foot.innerHTML = '<span class="status-dot"></span> Modo local · sem login';
-  const actions = document.querySelector('.top-actions');
-  const logout = document.querySelector('#logoutBtn');
-  if(logout) logout.remove();
-  setPage('dashboard');
+
+  function showLogin(message=''){
+    shell.style.display='none';
+    gate.hidden=false;
+    gate.innerHTML=`<div class="auth-card">
+      <div class="auth-brand"><div class="auth-brand-mark">🐵</div><div><h1>Nandos Tech</h1><p style="margin:3px 0 0">GESTÃO INTELIGENTE</p></div></div>
+      <h2 style="font:700 17px Manrope;margin:0">Acesse sua conta</h2>
+      <p>Entre com seu e-mail e senha cadastrados no sistema.</p>
+      ${message?`<div class="auth-error">${esc(message)}</div>`:''}
+      <form id="loginForm">
+        <label>E-mail<input name="email" type="email" autocomplete="username" required placeholder="seu@email.com"></label>
+        <label>Senha<input name="password" type="password" autocomplete="current-password" required placeholder="Sua senha"></label>
+        <button class="primary" type="submit">Entrar no sistema</button>
+        <div id="loginStatus" class="auth-loading" aria-live="polite"></div>
+      </form>
+    </div>`;
+    gate.querySelector('#loginForm').addEventListener('submit',async e=>{
+      e.preventDefault();
+      const form=e.currentTarget;
+      const button=form.querySelector('button');
+      const status=gate.querySelector('#loginStatus');
+      button.disabled=true;
+      status.textContent='Verificando acesso...';
+      const data=Object.fromEntries(new FormData(form));
+      const {error}=await client.auth.signInWithPassword({email:data.email.trim(),password:data.password});
+      if(error){
+        button.disabled=false;
+        status.textContent='';
+        showLogin('Não foi possível entrar. Confira o e-mail e a senha e tente novamente.');
+        return;
+      }
+      await loadAuthenticatedProfile();
+    });
+  }
+
+  async function loadAuthenticatedProfile(){
+    const {data:{user},error:userError}=await client.auth.getUser();
+    if(userError){
+      showLogin('Falha ao identificar a conta: '+(userError.message||'erro de autenticação')+' ('+(userError.code||'sem código')+').');
+      return;
+    }
+    if(!user){showLogin('Nenhuma sessão autenticada foi encontrada. Entre novamente.');return;}
+    const {data:profile,error}=await client
+      .from('profiles')
+      .select('id, full_name, role, branch_id, active')
+      .eq('id',user.id)
+      .maybeSingle();
+
+    if(error){
+      showLogin('Erro ao consultar seu perfil no banco: '+(error.message||'erro desconhecido')+' ('+(error.code||'sem código')+').');
+      return;
+    }
+    if(!profile){
+      await client.auth.signOut();
+      showLogin('O login foi aceito, mas não foi encontrado um perfil para este usuário ('+user.id+').');
+      return;
+    }
+    if(profile.active!==true || !profile.branch_id){
+      await client.auth.signOut();
+      showLogin('O perfil foi encontrado, mas está inativo ou sem filial vinculada. ID do usuário: '+user.id+'.');
+      return;
+    }
+
+    window.currentProfile=profile;
+    gate.hidden=true;
+    shell.style.display='flex';
+    const foot=document.querySelector('.sidebar-foot');
+    if(foot) foot.innerHTML='<span class="status-dot"></span> Conectado: '+esc(profile.full_name||user.email);
+    const actions=document.querySelector('.top-actions');
+    if(actions && !document.querySelector('#logoutBtn')){
+      const logout=document.createElement('button');
+      logout.id='logoutBtn';
+      logout.className='logout-btn';
+      logout.type='button';
+      logout.textContent='Sair';
+      logout.addEventListener('click',async()=>{
+        logout.disabled=true;
+        const {error}=await client.auth.signOut();
+        if(error){logout.disabled=false;toast('Não foi possível encerrar a sessão.');}
+      });
+      actions.appendChild(logout);
+    }
+    // Mostra o painel imediatamente; uma falha em um módulo não deve bloquear a tela.
+    setPage('dashboard');
+
+    async function safeStartupLoad(label, task){
+      try{
+        await task();
+      }catch(loadError){
+        console.error('Falha ao carregar '+label+':',loadError);
+        toast('Painel aberto. Não foi possível carregar '+label+'. Atualize a página para tentar novamente.');
+      }
+    }
+
+    // Primeiro os cadastros-base; depois os orçamentos que dependem deles.
+    await safeStartupLoad('produtos',loadRemoteProducts);
+    await safeStartupLoad('serviços',loadRemoteServices);
+    await safeStartupLoad('clientes',loadRemoteCustomers);
+    await safeStartupLoad('orçamentos',loadRemoteQuotes);
+    await safeStartupLoad('caixa e vendas',loadRemoteCashSales);
+    render();
+  }
+
+  const {data:{session},error}=await client.auth.getSession();
+  if(error){showLogin('Não foi possível verificar sua sessão. Atualize a página.');return;}
+  if(session) await loadAuthenticatedProfile();
+  else showLogin();
+
+  client.auth.onAuthStateChange((event)=>{
+    if(event==='SIGNED_OUT'){
+      window.currentProfile=null;
+      showLogin();
+    }
+  });
 }
 initializeAuth();
