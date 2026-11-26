@@ -54,4 +54,93 @@ $('#nav').addEventListener('click',e=>{let b=e.target.closest('[data-page]');if(
 $('#closeModal').onclick=closeModal;$('#menuBtn').onclick=()=>$('#sidebar').classList.toggle('open');$('#quickQuote').onclick=quoteForm;
 $('#today').textContent=new Date().toLocaleDateString('pt-BR',{weekday:'long',day:'2-digit',month:'long'});
 document.addEventListener('input',e=>{if(e.target.name==='discount')updateQuoteTotal()});
-setPage('dashboard');
+
+async function initializeAuth(){
+  const client = window.supabaseClient;
+  const gate = document.querySelector('#authGate');
+  const shell = document.querySelector('.app-shell');
+
+  function showLogin(message=''){
+    shell.style.display='none';
+    gate.hidden=false;
+    gate.innerHTML=`<div class="auth-card">
+      <div class="auth-brand"><div class="auth-brand-mark">🐵</div><div><h1>Nandos Tech</h1><p style="margin:3px 0 0">GESTÃO INTELIGENTE</p></div></div>
+      <h2 style="font:700 17px Manrope;margin:0">Acesse sua conta</h2>
+      <p>Entre com seu e-mail e senha cadastrados no sistema.</p>
+      ${message?`<div class="auth-error">${esc(message)}</div>`:''}
+      <form id="loginForm">
+        <label>E-mail<input name="email" type="email" autocomplete="username" required placeholder="seu@email.com"></label>
+        <label>Senha<input name="password" type="password" autocomplete="current-password" required placeholder="Sua senha"></label>
+        <button class="primary" type="submit">Entrar no sistema</button>
+        <div id="loginStatus" class="auth-loading" aria-live="polite"></div>
+      </form>
+    </div>`;
+    gate.querySelector('#loginForm').addEventListener('submit',async e=>{
+      e.preventDefault();
+      const form=e.currentTarget;
+      const button=form.querySelector('button');
+      const status=gate.querySelector('#loginStatus');
+      button.disabled=true;
+      status.textContent='Verificando acesso...';
+      const data=Object.fromEntries(new FormData(form));
+      const {error}=await client.auth.signInWithPassword({email:data.email.trim(),password:data.password});
+      if(error){
+        button.disabled=false;
+        status.textContent='';
+        showLogin('Não foi possível entrar. Confira o e-mail e a senha e tente novamente.');
+        return;
+      }
+      await loadAuthenticatedProfile();
+    });
+  }
+
+  async function loadAuthenticatedProfile(){
+    const {data:{user}}=await client.auth.getUser();
+    if(!user){showLogin();return;}
+    const {data:profile,error}=await client
+      .from('profiles')
+      .select('id, full_name, role, branch_id, active')
+      .eq('id',user.id)
+      .single();
+
+    if(error || !profile || profile.active!==true || !profile.branch_id){
+      await client.auth.signOut();
+      showLogin('Sua conta não possui um perfil ativo e uma filial vinculada. Solicite ao administrador que confira seu cadastro.');
+      return;
+    }
+
+    window.currentProfile=profile;
+    gate.hidden=true;
+    shell.style.display='flex';
+    const foot=document.querySelector('.sidebar-foot');
+    if(foot) foot.innerHTML='<span class="status-dot"></span> Conectado: '+esc(profile.full_name||user.email);
+    const actions=document.querySelector('.top-actions');
+    if(actions && !document.querySelector('#logoutBtn')){
+      const logout=document.createElement('button');
+      logout.id='logoutBtn';
+      logout.className='logout-btn';
+      logout.type='button';
+      logout.textContent='Sair';
+      logout.addEventListener('click',async()=>{
+        logout.disabled=true;
+        const {error}=await client.auth.signOut();
+        if(error){logout.disabled=false;toast('Não foi possível encerrar a sessão.');}
+      });
+      actions.appendChild(logout);
+    }
+    setPage('dashboard');
+  }
+
+  const {data:{session},error}=await client.auth.getSession();
+  if(error){showLogin('Não foi possível verificar sua sessão. Atualize a página.');return;}
+  if(session) await loadAuthenticatedProfile();
+  else showLogin();
+
+  client.auth.onAuthStateChange((event)=>{
+    if(event==='SIGNED_OUT'){
+      window.currentProfile=null;
+      showLogin();
+    }
+  });
+}
+initializeAuth();
