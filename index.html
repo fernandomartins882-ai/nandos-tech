@@ -37,11 +37,39 @@
   </div>
   <dialog id="modal"><div class="modal-head"><h2 id="modalTitle"></h2><button class="icon-btn" id="closeModal">×</button></div><div id="modalBody"></div></dialog>
   <div id="toast" class="toast"></div>
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="supabase-config.js"></script>
-  <script src="app.js"></script>
   <script>
-    if ("serviceWorker" in navigator) window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js").catch(console.error));
+    // Carrega a biblioteca de autenticação com uma segunda origem caso a primeira falhe.
+    function loadScript(src) {
+      return new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = src;
+        script.onload = resolve;
+        script.onerror = () => reject(new Error('Falha ao carregar ' + src));
+        document.head.appendChild(script);
+      });
+    }
+    async function startNandosApp() {
+      const gate = document.querySelector('#authGate');
+      const shell = document.querySelector('.app-shell');
+      try {
+        try {
+          await loadScript('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2');
+        } catch (firstError) {
+          await loadScript('https://unpkg.com/@supabase/supabase-js@2/dist/umd/supabase.js');
+        }
+        await loadScript('./supabase-config.js');
+        await loadScript('./app.js');
+      } catch (error) {
+        console.error('Falha ao iniciar o Nandos Tech:', error);
+        shell.style.display = 'none';
+        gate.hidden = false;
+        gate.innerHTML = '<div class="auth-card"><div class="auth-brand"><div class="auth-brand-mark">🐵</div><div><h1>Nandos Tech</h1><p>GESTÃO INTELIGENTE</p></div></div><h2>Não foi possível iniciar o sistema</h2><p>A conexão com a biblioteca de autenticação falhou. Atualize a página em instantes. Seus dados não foram apagados.</p></div>';
+      }
+    }
+    startNandosApp();
+    if ("serviceWorker" in navigator) {
+      window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js").catch(console.error));
+    }
   </script>
 </body>
 </html>
