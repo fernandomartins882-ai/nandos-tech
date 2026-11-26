@@ -379,12 +379,25 @@ async function initializeAuth(){
       });
       actions.appendChild(logout);
     }
-    await loadRemoteProducts();
-    await loadRemoteServices();
-    await loadRemoteCustomers();
-    await loadRemoteQuotes();
-    await loadRemoteCashSales();
+    // Mostra o painel imediatamente; uma falha em um módulo não deve bloquear a tela.
     setPage('dashboard');
+
+    async function safeStartupLoad(label, task){
+      try{
+        await task();
+      }catch(loadError){
+        console.error('Falha ao carregar '+label+':',loadError);
+        toast('Painel aberto. Não foi possível carregar '+label+'. Atualize a página para tentar novamente.');
+      }
+    }
+
+    // Primeiro os cadastros-base; depois os orçamentos que dependem deles.
+    await safeStartupLoad('produtos',loadRemoteProducts);
+    await safeStartupLoad('serviços',loadRemoteServices);
+    await safeStartupLoad('clientes',loadRemoteCustomers);
+    await safeStartupLoad('orçamentos',loadRemoteQuotes);
+    await safeStartupLoad('caixa e vendas',loadRemoteCashSales);
+    render();
   }
 
   const {data:{session},error}=await client.auth.getSession();
