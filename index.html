@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#101827">
+  <meta name="description" content="Sistema de gestão para assistência técnica e loja de acessórios">
+  <title>OrdemTech | Gestão</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar">
+      <div class="brand"><div class="brand-mark">OT</div><div><strong>OrdemTech</strong><small>GESTÃO INTELIGENTE</small></div></div>
+      <nav id="nav">
+        <button class="nav-item active" data-page="dashboard">▦ <span>Dashboard</span></button>
+        <button class="nav-item" data-page="products">▣ <span>Produtos e peças</span></button>
+        <button class="nav-item" data-page="services">⚙ <span>Serviços</span></button>
+        <button class="nav-item" data-page="customers">♙ <span>Clientes</span></button>
+        <button class="nav-item" data-page="quotes">▤ <span>Orçamentos</span></button>
+      </nav>
+      <div class="sidebar-foot"><span class="status-dot"></span> Dados salvos neste dispositivo</div>
+    </aside>
+    <main class="main">
+      <header class="topbar">
+        <button class="mobile-menu" id="menuBtn" aria-label="Abrir menu">☰</button>
+        <div><small class="eyebrow">PAINEL DE CONTROLE</small><h1 id="pageTitle">Visão geral</h1></div>
+        <div class="top-actions"><span id="today"></span><button class="primary" id="quickQuote">＋ Novo orçamento</button></div>
+      </header>
+      <section id="page" class="page"></section>
+      <footer>OrdemTech · Protótipo inicial · Gestão para assistência técnica</footer>
+    </main>
+  </div>
+  <dialog id="modal"><div class="modal-head"><h2 id="modalTitle"></h2><button class="icon-btn" id="closeModal">×</button></div><div id="modalBody"></div></dialog>
+  <div id="toast" class="toast"></div>
+  <script src="app.js"></script>
+  <script>
+    if ("serviceWorker" in navigator) window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js").catch(console.error));
+  </script>
+</body>
+</html>
