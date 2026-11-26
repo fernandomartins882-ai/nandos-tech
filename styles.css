@@ -22,3 +22,5 @@
 .auth-loading{color:#778196;font-size:12px;text-align:center;padding:8px}
 .logout-btn{border:1px solid var(--line);background:#fff;color:var(--muted);border-radius:8px;padding:9px 12px;font:600 12px 'DM Sans';cursor:pointer}
 @media(max-width:700px){.auth-card{padding:24px}}
+
+.sale-line,.sale-payment{display:grid;grid-template-columns:minmax(130px,1fr) 70px 95px 28px;gap:7px;margin:9px 0;align-items:center}.sale-payment{grid-template-columns:minmax(110px,1fr) 95px 70px 28px}.sale-line select,.sale-line input,.sale-payment select,.sale-payment input{min-width:0;width:100%;border:1px solid var(--line);border-radius:7px;padding:9px;font:12px 'DM Sans';background:#fff}button:disabled{opacity:.55;cursor:not-allowed}@media(max-width:650px){.sale-line{grid-template-columns:minmax(95px,1fr) 48px 65px 24px}.sale-payment{grid-template-columns:minmax(90px,1fr) 70px 48px 24px}}
