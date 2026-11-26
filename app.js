@@ -12,9 +12,29 @@ async function loadRemoteCashSales(){
  if(error){toast('Erro ao consultar caixa: '+error.message);return;}
  cashSession=session||null;cashMovements=[];
  if(cashSession){const r=await window.supabaseClient.from('cash_movements').select('*').eq('cash_session_id',cashSession.id).order('created_at',{ascending:false});if(r.error){toast('Erro ao consultar movimentações: '+r.error.message);return;}cashMovements=r.data||[];}
- const s=await window.supabaseClient.from('sales').select('id,sale_number,total,status,created_at').eq('branch_id',branch).order('created_at',{ascending:false}).limit(100);
+ const s=await window.supabaseClient.from('sales').select('id,sale_number,customer_id,subtotal,discount,total,status,notes,created_at').eq('branch_id',branch).order('created_at',{ascending:false}).limit(100);
  if(s.error){toast('Erro ao consultar vendas: '+s.error.message);return;}
- db.sales=(s.data||[]).map(x=>({id:x.id,number:x.sale_number,total:Number(x.total||0),status:x.status||'',date:(x.created_at||'').slice(0,10)}));
+ const sales=s.data||[],ids=sales.map(x=>x.id);
+ let itemRows=[],paymentRows=[];
+ if(ids.length){
+  const [itemsResult,paymentsResult]=await Promise.all([
+   window.supabaseClient.from('sale_items').select('sale_id,description,quantity,unit_price,total,discount_amount').in('sale_id',ids),
+   window.supabaseClient.from('sale_payments').select('sale_id,payment_method,amount,installments,notes').in('sale_id',ids)
+  ]);
+  if(itemsResult.error){toast('Erro ao carregar itens das vendas: '+itemsResult.error.message);return;}
+  if(paymentsResult.error){toast('Erro ao carregar pagamentos das vendas: '+paymentsResult.error.message);return;}
+  itemRows=itemsResult.data||[];paymentRows=paymentsResult.data||[];
+ }
+ db.sales=sales.map(x=>({
+  id:x.id,number:x.sale_number,total:Number(x.total||0),subtotal:Number(x.subtotal||0),
+  discount:Number(x.discount||0),status:x.status||'',date:(x.created_at||'').slice(0,10),
+  createdAt:x.created_at||'',customerId:x.customer_id,
+  customerName:db.customers.find(c=>c.id===x.customer_id)?.name||'Cliente não identificado',
+  customerPhone:db.customers.find(c=>c.id===x.customer_id)?.phone||'',
+  notes:x.notes||'',
+  items:itemRows.filter(i=>i.sale_id===x.id).map(i=>({name:i.description||'Produto',qty:Number(i.quantity||0),price:Number(i.unit_price||0),total:Number(i.total||0),discount:Number(i.discount_amount||0)})),
+  payments:paymentRows.filter(p=>p.sale_id===x.id).map(p=>({method:p.payment_method,amount:Number(p.amount||0),installments:Number(p.installments||1),notes:p.notes||''}))
+ }));
 }
 function cashExpected(){
  if(!cashSession)return 0;
@@ -117,10 +137,26 @@ function saleForm(){
  };
 }
 function salesPage(){
- const rows=db.sales.map(s=>'<tr><td>'+esc(s.number||'—')+'</td><td>'+dateBR(s.date)+'</td><td>'+brl(s.total)+'</td><td>'+esc(s.status||'—')+'</td></tr>').join('');
- $('#page').innerHTML='<div class="section-title"><div><h2>Vendas · PDV</h2><p>Histórico de vendas registradas.</p></div><button class="primary" id="newSale" '+(cashSession?'':'disabled')+'>＋ Nova venda</button></div><div class="panel"><p>'+(cashSession?'Caixa aberto. Você já pode registrar vendas.':'Para realizar vendas, primeiro abra o caixa.')+'</p><button class="secondary" id="goCash">Ir para o caixa</button></div><div class="table-card">'+table(['Nº venda','Data','Total','Status'],rows||'<tr><td colspan="4" class="empty">Nenhuma venda registrada.</td></tr>')+'</div>';
+ const rows=db.sales.map(s=>'<tr><td><b>'+esc(s.number||'—')+'</b></td><td>'+dateBR(s.date)+'</td><td>'+esc(s.customerName||'Cliente não identificado')+'</td><td>'+brl(s.total)+'</td><td>'+esc(s.status||'—')+'</td><td><div class="actions"><button class="small-btn" onclick="viewSale(\''+s.id+'\')">Ver itens</button><button class="small-btn" onclick="printSale(\''+s.id+'\')">Nota PDF</button></div></td></tr>').join('');
+ $('#page').innerHTML='<div class="section-title"><div><h2>Vendas · PDV</h2><p>Histórico de vendas e comprovantes dos produtos vendidos.</p></div><button class="primary" id="newSale" '+(cashSession?'':'disabled')+'>＋ Nova venda</button></div><div class="panel"><p>'+(cashSession?'Caixa aberto. Você já pode registrar vendas.':'Para realizar vendas, primeiro abra o caixa.')+'</p><button class="secondary" id="goCash">Ir para o caixa</button></div><div class="table-card">'+table(['Nº venda','Data','Cliente','Total','Status','Documento'],rows||'<tr><td colspan="6" class="empty">Nenhuma venda registrada.</td></tr>')+'</div>';
  $('#goCash').onclick=()=>setPage('cash');
  const newSale=$('#newSale');if(newSale)newSale.onclick=saleForm;
+}
+function paymentMethodLabel(method){return ({cash:'Dinheiro',pix:'Pix',debit:'Cartão de débito',credit:'Cartão de crédito',other:'Outro'})[method]||method||'—'}
+function viewSale(id){
+ const s=db.sales.find(x=>x.id===id);if(!s)return;
+ const items=(s.items||[]).map(i=>'<tr><td>'+esc(i.name)+'</td><td>'+i.qty+'</td><td>'+brl(i.price)+'</td><td>'+brl(i.total)+'</td></tr>').join('');
+ const payments=(s.payments||[]).map(p=>'<p><b>'+esc(paymentMethodLabel(p.method))+'</b>: '+brl(p.amount)+(p.method==='credit'&&p.installments>1?' · '+p.installments+'x':'')+'</p>').join('');
+ openModal('Detalhes da venda '+esc(s.number||''),'<div class="quote-preview"><div class="box"><h3>Cliente</h3><p><b>Nome:</b> '+esc(s.customerName||'Cliente não identificado')+'</p><p><b>Telefone:</b> '+esc(s.customerPhone||'—')+'</p><p><b>Data:</b> '+dateBR(s.date)+'</p></div><h3>Produtos e serviços vendidos</h3><div class="table-card">'+table(['Descrição','Qtd.','Unitário','Total'],items||'<tr><td colspan="4">Itens não encontrados.</td></tr>')+'</div><div class="box"><p><b>Subtotal:</b> '+brl(s.subtotal)+'</p><p><b>Desconto:</b> '+brl(s.discount)+'</p><p style="font-size:18px"><b>Total: '+brl(s.total)+'</b></p></div><div class="box"><h3>Formas de pagamento</h3>'+(payments||'<p>Não informado</p>')+'</div><div class="form-actions"><button class="secondary" onclick="closeModal()">Fechar</button><button class="primary" onclick="closeModal();printSale(\''+s.id+'\')">Gerar nota em PDF</button></div></div>');
+}
+function printSale(id){
+ const s=db.sales.find(x=>x.id===id);if(!s)return;
+ const w=window.open('','_blank');if(!w){toast('Permita pop-ups para gerar a nota de venda.');return;}
+ const logo=new URL('./Captura%20de%20Tela%202026-11-25%20a%CC%80s%2020.02.40.png',location.href).href;
+ const itemRows=(s.items||[]).map(i=>'<tr><td>'+esc(i.name)+'</td><td class="right">'+i.qty+'</td><td class="right">'+brl(i.price)+'</td><td class="right">'+brl(i.total)+'</td></tr>').join('');
+ const paymentRows=(s.payments||[]).map(p=>'<tr><td>'+esc(paymentMethodLabel(p.method))+(p.method==='credit'&&p.installments>1?' ('+p.installments+' parcelas)':'')+'</td><td class="right">'+brl(p.amount)+'</td></tr>').join('');
+ w.document.write('<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Nota de venda '+esc(s.number)+' - Nandos Tech</title><style>*{box-sizing:border-box}body{font:13px Arial,sans-serif;color:#202938;padding:28px;max-width:850px;margin:auto;line-height:1.45}.head{display:flex;align-items:center;gap:16px;border-bottom:3px solid #17243a;padding-bottom:16px}.logo{width:82px;height:82px;object-fit:contain}.company h1{font-size:23px;margin:0;color:#17243a}.company p{margin:3px 0;color:#596579;font-size:11px}.doc-title{margin:22px 0 12px;display:flex;justify-content:space-between;align-items:center}.doc-title h2{font-size:19px;margin:0}.number{font-weight:bold;color:#2459d6}.box{border:1px solid #d9dee7;padding:13px 15px;border-radius:7px;margin:12px 0}.box h3{font-size:12px;text-transform:uppercase;letter-spacing:.5px;margin:0 0 8px;color:#34445d}table{width:100%;border-collapse:collapse;margin-top:12px}th{background:#f0f3f8;color:#34445d}td,th{padding:10px;border:1px solid #dce1e9;text-align:left;font-size:12px}.right{text-align:right}.totals{margin:14px 0 0 auto;width:260px}.totals p{display:flex;justify-content:space-between;margin:5px 0}.grand{font-size:18px;font-weight:bold;border-top:2px solid #17243a;padding-top:9px}.foot{border-top:1px solid #dce1e9;margin-top:24px;padding-top:10px;font-size:10px;color:#697386;text-align:center}.notice{font-size:10px;color:#697386;margin-top:18px}@media print{body{padding:0}@page{size:A4;margin:14mm}}</style></head><body><header class="head"><img class="logo" src="'+logo+'" alt="Logo Nandos Tech"><div class="company"><h1>NANDOS TECH</h1><p>Assistência técnica e acessórios</p><p>CNPJ: 66.687.706/0001-81</p><p>Telefone/WhatsApp: (92) 98152-0399</p><p>Endereço: Rua Joelma Aguiar - União, Coari - AM, CEP 69460-000</p></div></header><div class="doc-title"><h2>NOTA DE VENDA</h2><span class="number">'+esc(s.number||'')+'</span></div><p><b>Data da venda:</b> '+dateBR(s.date)+'</p><div class="box"><h3>Dados do cliente</h3><p><b>Cliente:</b> '+esc(s.customerName||'Cliente não identificado')+'</p><p><b>Telefone:</b> '+esc(s.customerPhone||'—')+'</p></div><h3>Produtos e serviços vendidos</h3><table><thead><tr><th>Descrição do produto/serviço</th><th class="right">Qtd.</th><th class="right">Valor unitário</th><th class="right">Total</th></tr></thead><tbody>'+(itemRows||'<tr><td colspan="4">Itens não encontrados.</td></tr>')+'</tbody></table><div class="totals"><p><span>Subtotal</span><b>'+brl(s.subtotal)+'</b></p><p><span>Desconto</span><b>'+brl(s.discount)+'</b></p><p class="grand"><span>TOTAL</span><span>'+brl(s.total)+'</span></p></div><div class="box"><h3>Pagamento</h3><table><thead><tr><th>Forma de pagamento</th><th class="right">Valor</th></tr></thead><tbody>'+(paymentRows||'<tr><td colspan="2">Não informado</td></tr>')+'</tbody></table></div>'+(s.notes?'<div class="box"><h3>Observações</h3><p>'+esc(s.notes)+'</p></div>':'')+'<p class="notice">Este documento é um comprovante interno de venda e não substitui a nota fiscal ou documento fiscal obrigatório.</p><div class="foot">Nandos Tech · Assistência técnica e acessórios · Documento gerado pelo sistema de gestão.</div><script>window.onload=()=>window.print()<\/script></body></html>');
+ w.document.close();
 }
 
 function load(){try{return JSON.parse(localStorage.getItem(DBKEY))||{products:[],services:[],customers:[],quotes:[],sales:[]}}catch{return {products:[],services:[],customers:[],quotes:[],sales:[]}}}
