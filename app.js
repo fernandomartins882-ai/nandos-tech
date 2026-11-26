@@ -333,17 +333,30 @@ async function initializeAuth(){
   }
 
   async function loadAuthenticatedProfile(){
-    const {data:{user}}=await client.auth.getUser();
-    if(!user){showLogin();return;}
+    const {data:{user},error:userError}=await client.auth.getUser();
+    if(userError){
+      showLogin('Falha ao identificar a conta: '+(userError.message||'erro de autenticação')+' ('+(userError.code||'sem código')+').');
+      return;
+    }
+    if(!user){showLogin('Nenhuma sessão autenticada foi encontrada. Entre novamente.');return;}
     const {data:profile,error}=await client
       .from('profiles')
       .select('id, full_name, role, branch_id, active')
       .eq('id',user.id)
-      .single();
+      .maybeSingle();
 
-    if(error || !profile || profile.active!==true || !profile.branch_id){
+    if(error){
+      showLogin('Erro ao consultar seu perfil no banco: '+(error.message||'erro desconhecido')+' ('+(error.code||'sem código')+').');
+      return;
+    }
+    if(!profile){
       await client.auth.signOut();
-      showLogin('Sua conta não possui um perfil ativo e uma filial vinculada. Solicite ao administrador que confira seu cadastro.');
+      showLogin('O login foi aceito, mas não foi encontrado um perfil para este usuário ('+user.id+').');
+      return;
+    }
+    if(profile.active!==true || !profile.branch_id){
+      await client.auth.signOut();
+      showLogin('O perfil foi encontrado, mas está inativo ou sem filial vinculada. ID do usuário: '+user.id+'.');
       return;
     }
 
