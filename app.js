@@ -40,6 +40,34 @@ async function loadRemoteCustomers(){
   if(error){toast('Não foi possível carregar os clientes do Supabase: '+error.message);return;}
   db.customers=(data||[]).map(mapCustomerFromSupabase);
 }
+
+function quoteMetaFromNotes(notes){
+  try{const value=JSON.parse(notes||'{}');if(value&&value.__nandos_quote_v1)return value;return {notes:notes||''}}catch{return {notes:notes||''}}
+}
+function mapQuoteFromSupabase(q,items=[]){
+  const meta=quoteMetaFromNotes(q.notes);
+  const customer=db.customers.find(c=>c.id===q.customer_id)||{};
+  const lines=items.map(item=>{
+    const product=item.product_id?db.products.find(p=>p.id===item.product_id):null;
+    const service=item.service_id?db.services.find(s=>s.id===item.service_id):null;
+    const type=item.product_id?'Peça':'Serviço';
+    return {id:item.id,ref:item.product_id?'p:'+item.product_id:item.service_id?'s:'+item.service_id:'',type,name:item.description||product?.name||service?.name||'Item',qty:Number(item.quantity||0),price:Number(item.unit_price||0)};
+  });
+  return {id:q.id,number:meta.number||('ORC-'+String(q.id).slice(0,8).toUpperCase()),date:(q.created_at||'').slice(0,10),validity:q.valid_until||'',customerId:q.customer_id,customerName:customer.name||'Cliente',phone:customer.phone||'',email:customer.email||'',device:meta.device||'',imei:meta.imei||'',issue:meta.issue||'',warranty:meta.warranty||'',lines,subtotal:Number(q.subtotal||0),discount:Number(q.discount||0),total:Number(q.total||0),deadline:meta.deadline||'A combinar',notes:meta.notes||'',status:q.status||'Aguardando aprovação'};
+}
+async function loadRemoteQuotes(){
+  const branchId=currentBranchId();
+  if(!branchId)return;
+  const {data:quotes,error}=await window.supabaseClient.from('quotes').select('*').eq('branch_id',branchId).order('created_at',{ascending:false});
+  if(error){toast('Não foi possível carregar os orçamentos: '+error.message);return;}
+  if(!quotes?.length){db.quotes=[];return;}
+  const ids=quotes.map(q=>q.id);
+  const {data:items,error:itemError}=await window.supabaseClient.from('quote_items').select('*').in('quote_id',ids);
+  if(itemError){toast('Não foi possível carregar os itens dos orçamentos: '+itemError.message);return;}
+  const grouped={};
+  (items||[]).forEach(item=>(grouped[item.quote_id]??=[]).push(item));
+  db.quotes=quotes.map(q=>mapQuoteFromSupabase(q,grouped[q.id]||[]));
+}
 function toast(t){const el=$('#toast');el.textContent=t;el.classList.add('show');setTimeout(()=>el.classList.remove('show'),2500)}
 function dateBR(d){return d?new Date(d+'T12:00:00').toLocaleDateString('pt-BR'):'—'}
 function setPage(p){page=p;document.querySelectorAll('.nav-item').forEach(b=>b.classList.toggle('active',b.dataset.page===p));$('#pageTitle').textContent=({dashboard:'Visão geral',products:'Produtos e peças',services:'Serviços',customers:'Clientes',quotes:'Orçamentos'})[p];render()}
@@ -75,7 +103,50 @@ function serviceForm(s={}){openModal(s.id?'Editar serviço':'Novo serviço',`<fo
 function customerForm(c={}){openModal(c.id?'Editar cliente':'Novo cliente',`<form id="itemForm" class="form-grid">${formField('Nome completo *','name','text',c.name||'','required')}${formField('Telefone / WhatsApp *','phone','tel',c.phone||'','required')}${formField('E-mail','email','email',c.email||'')}${formField('CPF','cpf','text',c.cpf||'')}${formField('Data de nascimento','birth','date',c.birth||'')}<div class="field full"><label>Endereço / observações</label><textarea name="notes">${esc(c.notes||'')}</textarea></div><div class="field full form-actions"><button type="button" class="secondary" onclick="closeModal()">Cancelar</button><button class="primary">Salvar cliente</button></div></form>`);$('#itemForm').onsubmit=async e=>{e.preventDefault();let d=Object.fromEntries(new FormData(e.target));const button=e.target.querySelector('button.primary');button.disabled=true;try{const payload=mapCustomerToSupabase(d);let result;if(c.id){result=await window.supabaseClient.from('customers').update(payload).eq('id',c.id).eq('branch_id',currentBranchId()).select().single()}else{result=await window.supabaseClient.from('customers').insert(payload).select().single()}if(result.error)throw result.error;const saved=mapCustomerFromSupabase(result.data);if(c.id)db.customers=db.customers.map(x=>x.id===c.id?saved:x);else db.customers.unshift(saved);closeModal();render();toast('Cliente salvo no Supabase com sucesso.')}catch(error){button.disabled=false;toast('Erro ao salvar cliente: '+(error.message||'verifique sua permissão.'))}}}
 async function deleteItem(type,id){const labels={products:'produto',services:'serviço',customers:'cliente'};const item=db[type].find(x=>x.id===id);if(!item)return;const label=labels[type]||'registro';if(!confirm(`Tem certeza de que deseja excluir o ${label} "${item.name}"?`))return;if(type==='products'){const {error}=await window.supabaseClient.from('products').delete().eq('id',id).eq('branch_id',currentBranchId());if(error){toast('Não foi possível excluir: '+error.message);return}}db[type]=db[type].filter(x=>x.id!==id);if(type!=='products')save();render();toast(`${label[0].toUpperCase()+label.slice(1)} excluído com sucesso.`)}
 function editItem(type,id){let item=db[type].find(x=>x.id===id);({products:productForm,services:serviceForm,customers:customerForm}[type])(item)}
-function quoteForm(){quoteLines=[];let customerOptions=db.customers.map(c=>`<option value="${c.id}">${esc(c.name)} · ${esc(c.phone)}</option>`).join('');openModal('Novo orçamento',`<form id="quoteForm"><div class="form-grid"><div class="field"><label>Cliente *</label><select name="customer" required><option value="">Selecione um cliente</option>${customerOptions}</select></div><div class="field"><label>Validade do orçamento</label><input name="validity" type="date" value="${today()}"></div>${formField('Marca e modelo do aparelho','device')}${formField('IMEI / número de série','imei') }<div class="field full"><label>Defeito relatado</label><textarea name="issue"></textarea></div>${formField('Garantia oferecida neste orçamento','warranty','text','','placeholder="Ex.: 90 dias para o serviço realizado"')}</div><div class="quote-lines"><b style="font-size:12px">Itens do orçamento</b><div id="quoteLineWrap"></div><button type="button" class="secondary" style="margin-top:8px" onclick="addQuoteLine()">＋ Adicionar peça ou serviço</button></div><div class="form-grid" style="margin-top:14px">${formField('Desconto (R$)','discount','number',0,'min="0" step="0.01"')}${formField('Prazo estimado','deadline','text','A combinar') }<div class="field full"><label>Observações e condições</label><textarea name="notes"></textarea></div></div><div class="quote-total">Total do orçamento: <strong id="quoteTotal">${brl(0)}</strong></div><div class="form-actions"><button type="button" class="secondary" onclick="closeModal()">Cancelar</button><button class="primary">Salvar orçamento</button></div></form>`);addQuoteLine();$('#quoteForm').onsubmit=e=>{e.preventDefault();let f=Object.fromEntries(new FormData(e.target));let customer=db.customers.find(c=>c.id===f.customer);if(!customer){toast('Cadastre ou selecione um cliente.');return}let lines=quoteLines.map(l=>({...l}));let subtotal=lines.reduce((a,l)=>a+l.qty*l.price,0),discount=Math.max(0,Number(f.discount||0)),total=Math.max(0,subtotal-discount);let q={id:uid(),number:'ORC-'+Date.now().toString().slice(-6),date:today(),validity:f.validity,customerId:customer.id,customerName:customer.name,phone:customer.phone,email:customer.email,device:f.device,imei:f.imei,issue:f.issue,warranty:f.warranty,lines,subtotal,discount,total,deadline:f.deadline,notes:f.notes,status:'Aguardando aprovação'};db.quotes.push(q);save();closeModal();render();toast('Orçamento criado. Você já pode imprimir ou compartilhar.')}}
+function quoteForm(){
+  quoteLines=[];
+  let customerOptions=db.customers.map(c=>`<option value="${c.id}">${esc(c.name)} · ${esc(c.phone)}</option>`).join('');
+  openModal('Novo orçamento',`<form id="quoteForm"><div class="form-grid"><div class="field"><label>Cliente *</label><select name="customer" required><option value="">Selecione um cliente</option>${customerOptions}</select></div><div class="field"><label>Validade do orçamento</label><input name="validity" type="date" value="${today()}"></div>${formField('Marca e modelo do aparelho','device')}${formField('IMEI / número de série','imei')}<div class="field full"><label>Defeito relatado</label><textarea name="issue"></textarea></div>${formField('Garantia oferecida neste orçamento','warranty','text','','placeholder="Ex.: 90 dias para o serviço realizado"')}</div><div class="quote-lines"><b style="font-size:12px">Itens do orçamento</b><div id="quoteLineWrap"></div><button type="button" class="secondary" style="margin-top:8px" onclick="addQuoteLine()">＋ Adicionar peça ou serviço</button></div><div class="form-grid" style="margin-top:14px">${formField('Desconto (R$)','discount','number',0,'min="0" step="0.01"')}${formField('Prazo estimado','deadline','text','A combinar')}<div class="field full"><label>Observações e condições</label><textarea name="notes"></textarea></div></div><div class="quote-total">Total do orçamento: <strong id="quoteTotal">${brl(0)}</strong></div><div class="form-actions"><button type="button" class="secondary" onclick="closeModal()">Cancelar</button><button class="primary">Salvar orçamento</button></div></form>`);
+  addQuoteLine();
+  $('#quoteForm').onsubmit=async e=>{
+    e.preventDefault();
+    const form=e.currentTarget;
+    const f=Object.fromEntries(new FormData(form));
+    const customer=db.customers.find(c=>c.id===f.customer);
+    if(!customer){toast('Cadastre ou selecione um cliente.');return}
+    if(!quoteLines.length||quoteLines.some(l=>!l.ref)){toast('Selecione um produto ou serviço para cada item.');return}
+    const lines=quoteLines.map(l=>({...l}));
+    const subtotal=lines.reduce((a,l)=>a+l.qty*l.price,0);
+    const discount=Math.max(0,Number(f.discount||0));
+    if(discount>subtotal){toast('O desconto não pode ser maior que o subtotal.');return}
+    const total=Math.max(0,subtotal-discount);
+    const number='ORC-'+Date.now().toString().slice(-6);
+    const metadata={__nandos_quote_v1:true,number,device:f.device||'',imei:f.imei||'',issue:f.issue||'',warranty:f.warranty||'',deadline:f.deadline||'A combinar',notes:f.notes||''};
+    const payload={branch_id:currentBranchId(),customer_id:customer.id,created_by:window.currentProfile?.id,status:'Aguardando aprovação',subtotal,discount,total,notes:JSON.stringify(metadata),valid_until:f.validity||null};
+    const button=form.querySelector('button.primary');
+    button.disabled=true;
+    try{
+      const {data:quote,error}=await window.supabaseClient.from('quotes').insert(payload).select().single();
+      if(error)throw error;
+      const items=lines.map(line=>{
+        const isProduct=line.ref.startsWith('p:');
+        const refId=line.ref.slice(2);
+        return {quote_id:quote.id,product_id:isProduct?refId:null,service_id:isProduct?null:refId,description:line.name,quantity:Number(line.qty),unit_price:Number(line.price),total:Number(line.qty)*Number(line.price)};
+      });
+      const {error:itemError}=await window.supabaseClient.from('quote_items').insert(items);
+      if(itemError){
+        await window.supabaseClient.from('quotes').delete().eq('id',quote.id).eq('branch_id',currentBranchId());
+        throw itemError;
+      }
+      const saved=mapQuoteFromSupabase(quote,items.map((item,i)=>({...item,id:'item-'+i})));
+      db.quotes.unshift(saved);
+      closeModal();render();toast('Orçamento e itens salvos no Supabase com sucesso.');
+    }catch(error){
+      button.disabled=false;
+      toast('Erro ao salvar orçamento: '+(error.message||'verifique as permissões.'));
+    }
+  };
+}
 function addQuoteLine(){quoteLines.push({type:'product',ref:'',name:'',qty:1,price:0});drawQuoteLines()}
 function drawQuoteLines(){let wrap=$('#quoteLineWrap');if(!wrap)return;wrap.innerHTML=quoteLines.map((l,i)=>`<div class="quote-line"><select onchange="setLine(${i},'ref',this.value)"><option value="">Selecione item</option><optgroup label="Produtos">${db.products.map(p=>`<option value="p:${p.id}" ${l.ref==='p:'+p.id?'selected':''}>${esc(p.name)}</option>`).join('')}</optgroup><optgroup label="Serviços">${db.services.map(s=>`<option value="s:${s.id}" ${l.ref==='s:'+s.id?'selected':''}>${esc(s.name)}</option>`).join('')}</optgroup></select><input type="number" min="1" value="${l.qty}" onchange="setLine(${i},'qty',this.value)" title="Quantidade"><input type="number" min="0" step=".01" value="${l.price}" onchange="setLine(${i},'price',this.value)" title="Preço unitário"><button type="button" class="small-btn" onclick="removeLine(${i})">×</button></div>`).join('');updateQuoteTotal()}
 function setLine(i,k,v){let l=quoteLines[i];if(k==='ref'){l.ref=v;if(v){let [t,id]=v.split(':');let item=(t==='p'?db.products:db.services).find(x=>x.id===id);l.name=item.name;l.price=Number(item.price);l.type=t==='p'?'Peça':'Serviço'}}else l[k]=Number(v||0);drawQuoteLines()}
@@ -165,6 +236,7 @@ async function initializeAuth(){
     await loadRemoteProducts();
     await loadRemoteServices();
     await loadRemoteCustomers();
+    await loadRemoteQuotes();
     setPage('dashboard');
   }
 
