@@ -4,6 +4,63 @@ const brl=v=>Number(v||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL
 const today=()=>new Date().toISOString().slice(0,10);
 const uid=()=>Math.random().toString(36).slice(2,9).toUpperCase();
 let db=load(), page='dashboard', quoteLines=[];
+
+let cashSession=null,cashMovements=[];
+async function loadRemoteCashSales(){
+ const branch=currentBranchId();if(!branch)return;
+ const {data:session,error}=await window.supabaseClient.from('cash_sessions').select('*').eq('branch_id',branch).eq('status','open').order('opened_at',{ascending:false}).limit(1).maybeSingle();
+ if(error){toast('Erro ao consultar caixa: '+error.message);return;}
+ cashSession=session||null;cashMovements=[];
+ if(cashSession){const r=await window.supabaseClient.from('cash_movements').select('*').eq('cash_session_id',cashSession.id).order('created_at',{ascending:false});if(r.error){toast('Erro ao consultar movimentações: '+r.error.message);return;}cashMovements=r.data||[];}
+ const s=await window.supabaseClient.from('sales').select('id,sale_number,total,status,created_at').eq('branch_id',branch).order('created_at',{ascending:false}).limit(100);
+ if(s.error){toast('Erro ao consultar vendas: '+s.error.message);return;}
+ db.sales=(s.data||[]).map(x=>({id:x.id,number:x.sale_number,total:Number(x.total||0),status:x.status||'',date:(x.created_at||'').slice(0,10)}));
+}
+function cashExpected(){
+ if(!cashSession)return 0;
+ return Number(cashSession.opening_amount||0)+cashMovements.reduce((sum,m)=>{
+  if(m.authorization_status!=='approved')return sum;
+  if(['sale','supply','adjustment'].includes(m.movement_type))return sum+Number(m.amount||0);
+  if(m.movement_type==='withdrawal')return sum-Number(m.amount||0);
+  return sum;
+ },0);
+}
+function cashPage(){
+ const role=window.currentProfile?.role||'';
+ const rows=cashMovements.map(m=>'<tr><td>'+dateBR((m.created_at||'').slice(0,10))+'</td><td>'+esc(m.description||'—')+'</td><td>'+esc(m.movement_type)+'</td><td>'+brl(m.amount)+'</td><td>'+esc(m.authorization_status||'—')+'</td><td>'+(m.movement_type==='withdrawal'&&m.authorization_status==='pending'&&['admin','manager'].includes(role)?'<button class="small-btn" data-approve="'+m.id+'">Autorizar</button>':'—')+'</td></tr>').join('');
+ const top=cashSession?'<div class="stats">'+stat('Saldo inicial',brl(cashSession.opening_amount),'R$')+stat('Saldo esperado',brl(cashExpected()),'R$')+'</div><div class="panel"><button class="secondary" id="withdrawCash">Solicitar sangria</button> <button class="danger" id="closeCash">Fechar caixa</button></div>':'<div class="panel"><p>Nenhum caixa aberto nesta filial.</p><button class="primary" id="openCash">Abrir caixa</button></div>';
+ $('#page').innerHTML='<div class="section-title"><div><h2>Controle de caixa</h2><p>Acompanhe abertura, movimentações e fechamento.</p></div></div>'+top+'<div class="table-card"><div class="table-head"><h3>Movimentações do caixa</h3></div>'+table(['Data','Descrição','Tipo','Valor','Situação','Ação'],rows||'<tr><td colspan="6" class="empty">Nenhuma movimentação registrada.</td></tr>')+'</div>';
+ const open=$('#openCash');if(open)open.onclick=openCashForm;
+ const withdraw=$('#withdrawCash');if(withdraw)withdraw.onclick=withdrawalCashForm;
+ const close=$('#closeCash');if(close)close.onclick=closeCashForm;
+ document.querySelectorAll('[data-approve]').forEach(b=>b.onclick=()=>approveWithdrawal(b.dataset.approve));
+}
+function openCashForm(){
+ openModal('Abrir caixa','<form id="openCashForm">'+formField('Saldo inicial em dinheiro (R$)','amount','number','0','min="0" step="0.01" required')+'<div class="form-actions"><button type="button" class="secondary" id="cancelCashForm">Cancelar</button><button class="primary">Confirmar abertura</button></div></form>');
+ $('#cancelCashForm').onclick=closeModal;
+ $('#openCashForm').onsubmit=async e=>{e.preventDefault();const amount=Number(new FormData(e.currentTarget).get('amount'));const {error}=await window.supabaseClient.rpc('open_cash_session',{p_opening_amount:amount});if(error){toast(error.message);return;}await loadRemoteCashSales();closeModal();render();toast('Caixa aberto com sucesso.');};
+}
+function closeCashForm(){
+ openModal('Fechar caixa','<form id="closeCashForm"><p>Saldo esperado pelo sistema: <b>'+brl(cashExpected())+'</b></p>'+formField('Dinheiro contado (R$)','counted','number',cashExpected().toFixed(2),'min="0" step="0.01" required')+'<div class="form-actions"><button type="button" class="secondary" id="cancelCashForm">Cancelar</button><button class="primary">Confirmar fechamento</button></div></form>');
+ $('#cancelCashForm').onclick=closeModal;
+ $('#closeCashForm').onsubmit=async e=>{e.preventDefault();const amount=Number(new FormData(e.currentTarget).get('counted'));const {data,error}=await window.supabaseClient.rpc('close_cash_session',{p_cash_session_id:cashSession.id,p_counted_amount:amount});if(error){toast(error.message);return;}const result=Array.isArray(data)?data[0]:data;await loadRemoteCashSales();closeModal();render();toast('Caixa fechado. Diferença: '+brl(result?.difference||0));};
+}
+function withdrawalCashForm(){
+ openModal('Solicitar sangria','<form id="withdrawCashForm">'+formField('Valor da retirada (R$)','amount','number','','min="0.01" step="0.01" required')+formField('Motivo','description','text','','required')+'<div class="form-actions"><button type="button" class="secondary" id="cancelCashForm">Cancelar</button><button class="primary">Solicitar autorização</button></div></form>');
+ $('#cancelCashForm').onclick=closeModal;
+ $('#withdrawCashForm').onsubmit=async e=>{e.preventDefault();const f=Object.fromEntries(new FormData(e.currentTarget));const {error}=await window.supabaseClient.rpc('request_cash_withdrawal',{p_cash_session_id:cashSession.id,p_amount:Number(f.amount),p_description:f.description});if(error){toast(error.message);return;}await loadRemoteCashSales();closeModal();render();toast('Solicitação enviada para autorização.');};
+}
+async function approveWithdrawal(id){
+ if(!confirm('Autorizar esta sangria?'))return;
+ const {error}=await window.supabaseClient.rpc('approve_cash_withdrawal',{p_movement_id:id});
+ if(error){toast(error.message);return;}await loadRemoteCashSales();render();toast('Sangria autorizada.');
+}
+function salesPage(){
+ const rows=db.sales.map(s=>'<tr><td>'+esc(s.number||'—')+'</td><td>'+dateBR(s.date)+'</td><td>'+brl(s.total)+'</td><td>'+esc(s.status||'—')+'</td></tr>').join('');
+ $('#page').innerHTML='<div class="section-title"><div><h2>Vendas · PDV</h2><p>Histórico de vendas registradas.</p></div></div><div class="panel"><p>'+(cashSession?'Caixa aberto. O lançamento de vendas será habilitado na próxima etapa.':'Para realizar vendas, primeiro abra o caixa.')+'</p><button class="primary" id="goCash">Ir para o caixa</button></div><div class="table-card">'+table(['Nº venda','Data','Total','Status'],rows||'<tr><td colspan="4" class="empty">Nenhuma venda registrada.</td></tr>')+'</div>';
+ $('#goCash').onclick=()=>setPage('cash');
+}
+
 function load(){try{return JSON.parse(localStorage.getItem(DBKEY))||{products:[],services:[],customers:[],quotes:[],sales:[]}}catch{return {products:[],services:[],customers:[],quotes:[],sales:[]}}}
 function save(){
   // Guarda uma cópia dos dados antigos antes da primeira gravação após a integração.
@@ -70,8 +127,8 @@ async function loadRemoteQuotes(){
 }
 function toast(t){const el=$('#toast');el.textContent=t;el.classList.add('show');setTimeout(()=>el.classList.remove('show'),2500)}
 function dateBR(d){return d?new Date(d+'T12:00:00').toLocaleDateString('pt-BR'):'—'}
-function setPage(p){page=p;document.querySelectorAll('.nav-item').forEach(b=>b.classList.toggle('active',b.dataset.page===p));$('#pageTitle').textContent=({dashboard:'Visão geral',products:'Produtos e peças',services:'Serviços',customers:'Clientes',quotes:'Orçamentos'})[p];render()}
-function render(){({dashboard:dashboard,products:productsPage,services:servicesPage,customers:customersPage,quotes:quotesPage}[page]||dashboard)()}
+function setPage(p){page=p;document.querySelectorAll('.nav-item').forEach(b=>b.classList.toggle('active',b.dataset.page===p));$('#pageTitle').textContent=({dashboard:'Visão geral',products:'Produtos e peças',services:'Serviços',customers:'Clientes',quotes:'Orçamentos',cash:'Caixa',sales:'Vendas · PDV'})[p]||'Visão geral';render()}
+function render(){({dashboard:dashboard,products:productsPage,services:servicesPage,customers:customersPage,quotes:quotesPage,cash:cashPage,sales:salesPage}[page]||dashboard)()}
 function stat(label,value,icon,sub=''){return `<div class="stat"><div class="stat-top"><span>${label}</span><span class="stat-icon">${icon}</span></div><strong>${value}</strong><small>${sub}</small></div>`}
 function dashboard(){
  const month=today().slice(0,7);
@@ -237,6 +294,7 @@ async function initializeAuth(){
     await loadRemoteServices();
     await loadRemoteCustomers();
     await loadRemoteQuotes();
+    await loadRemoteCashSales();
     setPage('dashboard');
   }
 
