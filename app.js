@@ -12,7 +12,7 @@ async function loadRemoteCashSales(){
  if(error){toast('Erro ao consultar caixa: '+error.message);return;}
  cashSession=session||null;cashMovements=[];
  if(cashSession){const r=await window.supabaseClient.from('cash_movements').select('*').eq('cash_session_id',cashSession.id).order('created_at',{ascending:false});if(r.error){toast('Erro ao consultar movimentações: '+r.error.message);return;}cashMovements=r.data||[];}
- const s=await window.supabaseClient.from('sales').select('id,sale_number,customer_id,subtotal,discount,total,status,notes,created_at').eq('branch_id',branch).order('created_at',{ascending:false}).limit(100);
+ const s=await window.supabaseClient.from('sales').select('id,sale_number,customer_id,subtotal,discount,total,status,notes,created_at,cancelled_at,cancelled_by,cancellation_reason').eq('branch_id',branch).order('created_at',{ascending:false}).limit(100);
  if(s.error){toast('Erro ao consultar vendas: '+s.error.message);return;}
  const sales=s.data||[],ids=sales.map(x=>x.id);
  let itemRows=[],paymentRows=[];
@@ -28,7 +28,7 @@ async function loadRemoteCashSales(){
  db.sales=sales.map(x=>({
   id:x.id,number:x.sale_number,total:Number(x.total||0),subtotal:Number(x.subtotal||0),
   discount:Number(x.discount||0),status:x.status||'',date:(x.created_at||'').slice(0,10),
-  createdAt:x.created_at||'',customerId:x.customer_id,
+  createdAt:x.created_at||'',cancelledAt:x.cancelled_at||'',cancelledBy:x.cancelled_by||'',cancellationReason:x.cancellation_reason||'',customerId:x.customer_id,
   customerName:db.customers.find(c=>c.id===x.customer_id)?.name||'Cliente não identificado',
   customerPhone:db.customers.find(c=>c.id===x.customer_id)?.phone||'',
   notes:x.notes||'',
@@ -137,10 +137,27 @@ function saleForm(){
  };
 }
 function salesPage(){
- const rows=db.sales.map(s=>'<tr><td><b>'+esc(s.number||'—')+'</b></td><td>'+dateBR(s.date)+'</td><td>'+esc(s.customerName||'Cliente não identificado')+'</td><td>'+brl(s.total)+'</td><td>'+esc(s.status||'—')+'</td><td><div class="actions"><button class="small-btn" onclick="viewSale(\''+s.id+'\')">Ver itens</button><button class="small-btn" onclick="printSale(\''+s.id+'\')">Nota PDF</button></div></td></tr>').join('');
- $('#page').innerHTML='<div class="section-title"><div><h2>Vendas · PDV</h2><p>Histórico de vendas e comprovantes dos produtos vendidos.</p></div><button class="primary" id="newSale" '+(cashSession?'':'disabled')+'>＋ Nova venda</button></div><div class="panel"><p>'+(cashSession?'Caixa aberto. Você já pode registrar vendas.':'Para realizar vendas, primeiro abra o caixa.')+'</p><button class="secondary" id="goCash">Ir para o caixa</button></div><div class="table-card">'+table(['Nº venda','Data','Cliente','Total','Status','Documento'],rows||'<tr><td colspan="6" class="empty">Nenhuma venda registrada.</td></tr>')+'</div>';
+ const rows=db.sales.map(s=>'<tr><td><b>'+esc(s.number||'—')+'</b></td><td>'+dateBR(s.date)+'</td><td>'+esc(s.customerName||'Cliente não identificado')+'</td><td>'+brl(s.total)+'</td><td>'+esc(s.status==='completed'?'Concluída':s.status==='cancelled'?'Cancelada':s.status||'—')+'</td><td><div class="actions"><button class="small-btn" onclick="viewSale(\\''+s.id+'\\')">Ver itens</button><button class="small-btn" onclick="printSale(\\''+s.id+'\\')">Nota PDF</button>'+(s.status==='completed'?'<button class="small-btn danger" onclick="cancelSaleForm(\\''+s.id+'\\')">Cancelar venda</button>':'')+'</div></td></tr>').join('');
+ $('#page').innerHTML='<div class="section-title"><div><h2>Vendas · PDV</h2><p>Histórico de vendas e comprovantes dos produtos vendidos.</p></div><button class="primary" id="newSale" '+(cashSession?'':'disabled')+'>＋ Nova venda</button></div><div class="panel"><p>'+(cashSession?'Caixa aberto. Você já pode registrar vendas.':'Para realizar vendas, primeiro abra o caixa.')+'</p><button class="secondary" id="goCash">Ir para o caixa</button></div><div class="table-card">'+table(['Nº venda','Data','Cliente','Total','Status','Ações'],rows||'<tr><td colspan="6" class="empty">Nenhuma venda registrada.</td></tr>')+'</div>';
  $('#goCash').onclick=()=>setPage('cash');
  const newSale=$('#newSale');if(newSale)newSale.onclick=saleForm;
+}
+function cancelSaleForm(id){
+ const sale=db.sales.find(item=>item.id===id);
+ if(!sale||sale.status!=='completed'){toast('Esta venda não está disponível para cancelamento.');return;}
+ openModal('Cancelar venda nº '+esc(sale.number||''),'<form id="cancelSaleForm"><div class="box"><p><b>Cliente:</b> '+esc(sale.customerName||'Cliente não identificado')+'</p><p><b>Valor:</b> '+brl(sale.total)+'</p><p>O estoque será atualizado e eventual devolução em dinheiro será registrada no caixa aberto.</p></div><div class="field"><label>Motivo do cancelamento *</label><textarea name="reason" rows="3" required maxlength="500" placeholder="Informe o motivo do cancelamento"></textarea></div><div class="form-actions"><button type="button" class="secondary" id="cancelSaleClose">Voltar</button><button type="submit" class="danger">Confirmar cancelamento</button></div></form>');
+ $('#cancelSaleClose').onclick=closeModal;
+ $('#cancelSaleForm').onsubmit=async e=>{
+  e.preventDefault();
+  const reason=new FormData(e.currentTarget).get('reason')?.trim();
+  if(!reason){toast('Informe o motivo do cancelamento.');return;}
+  const button=e.currentTarget.querySelector('button[type="submit"]');
+  button.disabled=true;button.textContent='Cancelando...';
+  const {error}=await window.supabaseClient.rpc('cancel_sale',{p_sale_id:id,p_reason:reason});
+  if(error){button.disabled=false;button.textContent='Confirmar cancelamento';toast('Não foi possível cancelar: '+error.message);return;}
+  await loadRemoteCashSales();
+  closeModal();render();toast('Venda cancelada. Estoque e caixa atualizados conforme os pagamentos.');
+ };
 }
 function paymentMethodLabel(method){return ({cash:'Dinheiro',pix:'Pix',debit:'Cartão de débito',credit:'Cartão de crédito',other:'Outro'})[method]||method||'—'}
 function viewSale(id){
